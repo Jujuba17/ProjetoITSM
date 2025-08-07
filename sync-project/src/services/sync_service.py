@@ -227,14 +227,28 @@ def _find_and_map_new_tickets(jira_tickets, config):
        
 
 def run_sync_for_client(config):
-    """Função que executa a sequência completa de sincronização para um cliente."""
+    """
+    [CORRIGIDO] Função que executa a sequência completa de sincronização.
+    A condição para aplicar o filtro de data de corte foi corrigida.
+    """
     sync_days = config.get("SYNC_DAYS_AGO", 1)
-    since_date = (datetime.now(timezone.utc) - timedelta(days=sync_days)).strftime('%Y-%m-%d')
-    log(f"Buscando tickets atualizados desde {since_date}...", 'INFO')
-
-    jira_tickets = jira_service.fetch_updated_tickets(config, since_date)
-    freshdesk_tickets = freshdesk_service.fetch_updated_tickets(config, since_date)
-    log(f"Encontrados {len(jira_tickets)} tickets no Jira e {len(freshdesk_tickets)} no Freshdesk.", 'INFO')
+    since_date_str = (datetime.now(timezone.utc) - timedelta(days=sync_days)).strftime('%Y-%m-%d')
+    
+    # Prepara o filtro de data de criação se o smart mapping estiver desativado
+    created_since_filter = None
+    # [CORREÇÃO APLICADA] Usar False como padrão para a condição funcionar corretamente
+    # quando a flag é explicitamente 'false' ou não está presente.
+    if not config.get('ENABLE_SMART_MAPPING', False):
+        first_run_timestamp_str = config.get('FIRST_RUN_TIMESTAMP')
+        if first_run_timestamp_str:
+            # Formata para 'YYYY-MM-DD' para a query JQL
+            created_since_filter = date_utils.parse_datetime(first_run_timestamp_str).strftime('%Y-%m-%d')
+            log(f"Mapeamento inteligente desativado. Apenas tickets criados a partir de {created_since_filter} serão considerados para mapeamento.")
+    
+    # Etapa 1: Buscar dados
+    jira_tickets = jira_service.fetch_updated_tickets(config, since_date_str, created_since_filter)
+    freshdesk_tickets = freshdesk_service.fetch_updated_tickets(config, since_date_str)
+    log(f"Encontrados {len(jira_tickets)} tickets no Jira e {len(freshdesk_tickets)} no Freshdesk para processar.", 'INFO')
 
     if not jira_tickets and not freshdesk_tickets:
         log("Nenhum ticket para sincronizar.", 'INFO')

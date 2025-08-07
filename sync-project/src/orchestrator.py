@@ -37,7 +37,7 @@ def _prepare_client_environment(config, client_folder_path):
     set_log_level(config.get('LOG_LEVEL', 'INFO'))
     log(f"Nível de log definido para: {config.get('LOG_LEVEL', 'INFO')}")
 
-    # [CORREÇÃO 1] Unificação de Flags: Garante retrocompatibilidade
+    # Unificação de Flags: Garante retrocompatibilidade
     if 'ENABLE_SMART_MAPPING' not in config:
         config['ENABLE_SMART_MAPPING'] = config.get('ENABLE_SMART_INITIAL_MAPPING', True)
 
@@ -63,7 +63,7 @@ def _prepare_client_environment(config, client_folder_path):
     return config
 
 def _save_mapping(config):
-    # ... (código inalterado) ...
+
     if not config.get('mapping_data'):
         log("Nenhum dado de mapeamento para salvar.", 'INFO')
         return
@@ -76,20 +76,32 @@ def _save_mapping(config):
         log(f"ERRO ao salvar arquivo de mapeamento: {e}", 'ERROR')
 
 def _save_config_if_changed(config, client_folder_path):
-    """Salva o config.json se a FIRST_RUN_TIMESTAMP foi adicionada."""
+    """
+    [CORRIGIDO] Salva o config.json se a FIRST_RUN_TIMESTAMP foi adicionada,
+    preservando a estrutura original do arquivo e evitando salvar chaves padrão.
+    """
     config_path = os.path.join(client_folder_path, 'config.json')
-    # Carrega a configuração original para comparar
-    with open(config_path, 'r', encoding='utf-8') as f:
-        original_config = json.load(f)
     
-    # Se a chave foi adicionada durante a execução, salva o arquivo
+    try:
+        # Carrega a configuração original (como estava no disco) para comparar
+        with open(config_path, 'r', encoding='utf-8') as f:
+            original_config = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        log(f"Não foi possível carregar o config.json original para comparação: {e}", 'ERROR')
+        return
+
+    # Verifica se a chave foi adicionada durante a execução (e não existia no arquivo original)
     if 'FIRST_RUN_TIMESTAMP' in config and 'FIRST_RUN_TIMESTAMP' not in original_config:
         log("Detectada nova 'FIRST_RUN_TIMESTAMP'. Salvando no config.json...", 'INFO')
-        # Remove dados de tempo de execução antes de salvar
-        config_to_save = {k: v for k, v in config.items() if k not in ['JIRA_AUTH', 'FRESHDESK_AUTH', 'MAPPING_FILE_PATH', 'mapping_data']}
+        
+        # Cria uma cópia da configuração original, adicionando APENAS o novo campo
+        updated_config = original_config.copy()
+        updated_config['FIRST_RUN_TIMESTAMP'] = config['FIRST_RUN_TIMESTAMP']
+        
         try:
             with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config_to_save, f, indent=4)
+                json.dump(updated_config, f, indent=4)
+            log("Config.json atualizado com sucesso apenas com a nova FIRST_RUN_TIMESTAMP.", 'INFO')
         except Exception as e:
             log(f"ERRO ao salvar config.json atualizado: {e}", 'ERROR')
 
@@ -116,7 +128,7 @@ def process_client(client_folder_path, client_name):
         traceback.print_exc()
 
 def main():
-    # ... (código inalterado) ...
+    
     start_time = datetime.now()
     log("\n" + "="*70, force_print=True)
     log(f"INICIANDO SINCRONIZAÇÃO GERAL EM: {start_time.strftime('%Y-%m-%d %H:%M:%S')}", force_print=True)

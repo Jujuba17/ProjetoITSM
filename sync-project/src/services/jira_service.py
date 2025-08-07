@@ -5,15 +5,30 @@ Serviço responsável por todas as interações com a API do Jira.
 from ..utils.api_client import api_request
 from ..utils.logger import log
 
-def fetch_updated_tickets(config, since_date_str):
-    """Busca tickets de um projeto que foram atualizados desde uma data."""
+def fetch_updated_tickets(config, since_date_str, created_since_str=None):
+    """
+    Busca tickets de um projeto que foram atualizados desde uma data.
+    [CORRIGIDO] Adiciona um filtro opcional para a data de criação.
+    """
     log(f"Buscando tickets do Jira atualizados desde {since_date_str}...")
-    jql = f"project = '{config['JIRA_PROJECT_KEY']}' AND updated >= '{since_date_str}'"
+    
+    # Constrói a JQL base
+    jql_parts = [
+        f"project = '{config['JIRA_PROJECT_KEY']}'",
+        f"updated >= '{since_date_str}'"
+    ]
+    
+    # Adiciona o filtro de data de criação se ele for fornecido
+    if created_since_str:
+        jql_parts.append(f"created >= '{created_since_str}'")
+        log(f"Aplicando filtro adicional: criados desde {created_since_str}", 'DEBUG')
+
+    jql = " AND ".join(jql_parts)
+    
     url = f"{config['JIRA_URL']}/rest/api/3/search"
     params = {'jql': jql, 'fields': 'summary,description,status,comment,updated,created,priority'}
     response = api_request('GET', url, config['JIRA_AUTH'], params=params)
     return response.get('issues', []) if response else []
-
 def add_comment(config, issue_key, comment_text):
     """Adiciona um comentário a um ticket."""
     log(f"Adicionando comentário ao Jira {issue_key}...")
