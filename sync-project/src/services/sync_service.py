@@ -9,12 +9,10 @@ from . import jira_service, freshdesk_service
 from ..utils import date_utils, text_utils
 from ..utils.logger import log
 
-# --- Funções _sync_jira_to_freshdesk_updates e _sync_freshdesk_to_jira_updates (inalteradas) ---
-
 def _sync_jira_to_freshdesk_updates(jira_tickets, config):
     """
     Sincroniza atualizações de tickets do Jira para o Freshdesk, incluindo
-    prioridade e comentários.
+    prioridade e, opcionalmente, comentários.
     """
     mapping = config['mapping_data']
     log("\n--- Sincronizando Jira -> Freshdesk (Atualizações) ---")
@@ -36,33 +34,46 @@ def _sync_jira_to_freshdesk_updates(jira_tickets, config):
             if fd_priority is not None:
                 freshdesk_service.update_ticket_fields(config, fd_id, {'priority': fd_priority})
 
-        last_synced_comment_id = int(mapping[jira_key].get('last_jira_comment_id', 0))
-        new_max_comment_id = last_synced_comment_id
-        all_comments = jira_ticket['fields'].get('comment', {}).get('comments', [])
-        sorted_comments = sorted(all_comments, key=lambda c: int(c['id']))
+        # --- ALTERAÇÃO AQUI: Bloco de sincronização de comentários ---
+        # Apenas sincroniza comentários se a flag SYNC_COMMENTS for verdadeira (ou não existir, padrão True)
+        if config.get('SYNC_COMMENTS', True):
+            last_synced_comment_id = int(mapping[jira_key].get('last_jira_comment_id', 0))
+            new_max_comment_id = last_synced_comment_id
+            all_comments = jira_ticket['fields'].get('comment', {}).get('comments', [])
+            sorted_comments = sorted(all_comments, key=lambda c: int(c['id']))
 
-        for comment in sorted_comments:
-            comment_id = int(comment['id'])
-            if comment_id > last_synced_comment_id:
-                try:
-                    comment_body = comment['body']['content'][0]['content'][0]['text']
-                    if config['BOT_COMMENT_TAG'] not in comment_body:
-                        log(f"Novo comentário encontrado no Jira {jira_key} (ID: {comment_id}). Sincronizando...")
-                        note = f"{config['BOT_COMMENT_TAG']}\n**Comentário do Jira por {comment['author']['displayName']}:**\n\n{comment_body}"
-                        freshdesk_service.add_note(config, fd_id, note)
-                        if comment_id > new_max_comment_id:
-                            new_max_comment_id = comment_id
-                except (KeyError, IndexError):
-                    log(f"Não foi possível extrair conteúdo do comentário ID {comment_id} do Jira {jira_key}", 'WARNING')
-        
-        if new_max_comment_id > last_synced_comment_id:
-            mapping[jira_key]['last_jira_comment_id'] = new_max_comment_id
-            log(f"Último ID de comentário do Jira para {jira_key} atualizado para {new_max_comment_id}", 'DEBUG')
+            for comment in sorted_comments:
+                comment_id = int(comment['id'])
+                if comment_id > last_synced_comment_id:
+                    try:
+                        # Extrai o texto do comentário (formato ADF do Jira)
+                        comment_body_list = [c.get('text', '') for p in comment['body']['content'] if p.get('type') == 'paragraph' for c in p.get('content', [])]
+                        comment_body = "\n".join(comment_body_list)
+
+                        if config['BOT_COMMENT_TAG'] not in comment_body:
+                            log(f"Novo comentário encontrado no Jira {jira_key} (ID: {comment_id}). Sincronizando...")
+                            note = f"{config['BOT_COMMENT_TAG']}\n**Comentário do Jira por {comment['author']['displayName']}:**\n\n{comment_body}"
+                            freshdesk_service.add_note(config, fd_id, note)
+                            if comment_id > new_max_comment_id:
+                                new_max_comment_id = comment_id
+                    except (KeyError, IndexError, TypeError):
+                        log(f"Não foi possível extrair conteúdo do comentário ID {comment_id} do Jira {jira_key}", 'WARNING')
+            
+            if new_max_comment_id > last_synced_comment_id:
+                mapping[jira_key]['last_jira_comment_id'] = new_max_comment_id
+                log(f"Último ID de comentário do Jira para {jira_key} atualizado para {new_max_comment_id}", 'DEBUG')
+        else:
+            log(f"Sincronização de comentários Jira->Freshdesk pulada para {jira_key} (config 'SYNC_COMMENTS' é false).", 'DEBUG')
+        # --- FIM DA ALTERAÇÃO ---
 
         mapping[jira_key]['last_jira_update'] = datetime.now(timezone.utc).isoformat()
 
 
 def _sync_freshdesk_to_jira_updates(freshdesk_tickets, config):
+    """
+    Sincroniza atualizações do Freshdesk para o Jira, incluindo status e,
+    opcionalmente, conversas/comentários.
+    """
     mapping = config['mapping_data']
     fd_id_to_jira_key = {str(v['freshdesk_id']): k for k, v in mapping.items()}
     log("\n--- Sincronizando Freshdesk -> Jira (Atualizações) ---")
@@ -81,17 +92,23 @@ def _sync_freshdesk_to_jira_updates(freshdesk_tickets, config):
         if transition_name:
             jira_service.transition_issue(config, jira_key, transition_name)
 
-        for conv in freshdesk_service.fetch_conversations(config, fd_id_str):
-            if not last_sync or date_utils.parse_datetime(conv['updated_at']) > last_sync:
-                if config['BOT_COMMENT_TAG'] not in conv.get('body_text', ''):
-                    note_type = "Nota Privada" if conv.get('private', True) else "Resposta Pública"
-                    user_name = conv.get('user', {}).get('name', 'Usuário')
-                    comment = f"{config['BOT_COMMENT_TAG']}\n**{note_type} do Freshdesk por {user_name}:**\n\n{conv['body_text']}"
-                    jira_service.add_comment(config, jira_key, comment)
+        # --- ALTERAÇÃO AQUI: Bloco de sincronização de conversas ---
+        # Apenas sincroniza conversas se a flag SYNC_COMMENTS for verdadeira
+        if config.get('SYNC_COMMENTS', True):
+            for conv in freshdesk_service.fetch_conversations(config, fd_id_str):
+                if not last_sync or date_utils.parse_datetime(conv['updated_at']) > last_sync:
+                    if config['BOT_COMMENT_TAG'] not in conv.get('body_text', ''):
+                        note_type = "Nota Privada" if conv.get('private', True) else "Resposta Pública"
+                        user_name = conv.get('user', {}).get('name', 'Usuário')
+                        comment = f"{config['BOT_COMMENT_TAG']}\n**{note_type} do Freshdesk por {user_name}:**\n\n{conv['body_text']}"
+                        jira_service.add_comment(config, jira_key, comment)
+        else:
+            log(f"Sincronização de conversas Freshdesk->Jira pulada para {fd_id_str} (config 'SYNC_COMMENTS' é false).", 'DEBUG')
+        # --- FIM DA ALTERAÇÃO ---
 
         mapping[jira_key]['last_freshdesk_update'] = datetime.now(timezone.utc).isoformat()
 
-# --- FIM DAS FUNÇÕES INALTERADAS ---
+# --- Funções _record_match, _create_new_ticket, _find_and_map_new_tickets e run_sync_for_client permanecem inalteradas ---
 
 def _record_match(mapping, config, jira_ticket, fd_ticket, match_type):
     """Registra um mapeamento encontrado e adiciona um comentário no Jira."""

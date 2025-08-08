@@ -59,7 +59,8 @@ def _prepare_client_environment(config, client_folder_path):
     config.setdefault('JIRA_TO_FRESHDESK_STATUS', {'Backlog': 2, 'Em andamento': 3, 'Concluído': 4, 'Closed': 4})
     config.setdefault('FRESHDESK_TO_JIRA_TRANSITION_NAME', {2: "Lista de pendências", 3: "Em andamento", 4: "Itens concluídos", 5: "Itens concluídos"})
     config.setdefault('BOT_COMMENT_TAG', "[SyncBot]")
-    
+    config.setdefault('SYNC_COMMENTS', True) 
+
     return config
 
 def _save_mapping(config):

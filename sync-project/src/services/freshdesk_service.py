@@ -6,15 +6,31 @@ from ..utils.api_client import api_request
 from ..utils.logger import log
 
 def fetch_updated_tickets(config, since_date_str):
-    """Busca tickets do Freshdesk atualizados desde uma data específica."""
-    log(f"Buscando tickets do Freshdesk atualizados desde {since_date_str}...")
+    """
+    Busca tickets do Freshdesk atualizados desde uma data específica,
+    opcionalmente filtrados por empresa.
+    """
+    # --- ALTERAÇÃO: Ler o company_id da configuração ---
+    company_id = config.get('FRESHDESK_COMPANY_ID')
+    log_msg = f"Buscando tickets do Freshdesk atualizados desde {since_date_str}"
+    if company_id:
+        log_msg += f" para a Empresa ID: {company_id}..."
+    else:
+        log_msg += " (sem filtro de empresa)..."
+    log(log_msg)
+    
     updated_since = f"{since_date_str}T00:00:00Z"
     url = f"https://{config['FRESHDESK_DOMAIN']}.freshdesk.com/api/v2/tickets"
     params = {'updated_since': updated_since, 'include': 'description', 'order_by': 'updated_at', 'order_type': 'desc'}
+
+    # --- ALTERAÇÃO: Adicionar o filtro de empresa se ele existir ---
+    if company_id:
+        params['company_id'] = company_id
+    
     return api_request('GET', url, config['FRESHDESK_AUTH'], params=params) or []
 
 def create_ticket(config, jira_ticket, description_text):
-    """Cria um novo ticket no Freshdesk."""
+    """Cria um novo ticket no Freshdesk, associando-o a uma empresa se configurado."""
     log(f"Criando ticket no Freshdesk para o Jira {jira_ticket['key']}...")
     url = f"https://{config['FRESHDESK_DOMAIN']}.freshdesk.com/api/v2/tickets"
     
@@ -30,8 +46,39 @@ def create_ticket(config, jira_ticket, description_text):
         'status': fd_status,
         'tags': [jira_ticket['key']]
     }
+
+    # --- ALTERAÇÃO: Adicionar o company_id ao criar o ticket ---
+    company_id = config.get('FRESHDESK_COMPANY_ID')
+    if company_id:
+        payload['company_id'] = int(company_id) # API espera um inteiro
+        log(f"Ticket será associado à Empresa ID: {company_id}", 'DEBUG')
+
     return api_request('POST', url, config['FRESHDESK_AUTH'], json_data=payload)
 
+def fetch_all_relevant_tickets(config, since_date_str):
+    """
+    Busca todos os tickets recentes do Freshdesk para o mapeamento inteligente,
+    filtrados por empresa se configurado.
+    """
+    # --- ALTERAÇÃO: Ler o company_id da configuração ---
+    company_id = config.get('FRESHDESK_COMPANY_ID')
+    log_msg = f"Buscando todos os tickets do Freshdesk desde {since_date_str} para mapeamento"
+    if company_id:
+        log_msg += f" para a Empresa ID: {company_id}..."
+    else:
+        log_msg += "..."
+    log(log_msg)
+
+    url = f"https://{config['FRESHDESK_DOMAIN']}.freshdesk.com/api/v2/tickets"
+    params = {'updated_since': f"{since_date_str}T00:00:00Z", 'include': 'description', 'per_page': 100}
+
+    # --- ALTERAÇÃO: Adicionar o filtro de empresa se ele existir ---
+    if company_id:
+        params['company_id'] = company_id
+        
+    return api_request('GET', url, config['FRESHDESK_AUTH'], params=params) or []
+
+# --- Funções fetch_conversations, add_note, update_ticket_fields não precisam de alteração ---
 def fetch_conversations(config, ticket_id):
     """Busca todas as conversas de um ticket."""
     log(f"Buscando conversas do Freshdesk para o ticket ID: {ticket_id}...")
@@ -50,10 +97,3 @@ def update_ticket_fields(config, ticket_id, update_fields):
     log(f"Atualizando campos do ticket Freshdesk {ticket_id}: {update_fields}")
     url = f"https://{config['FRESHDESK_DOMAIN']}.freshdesk.com/api/v2/tickets/{ticket_id}"
     return api_request('PUT', url, config['FRESHDESK_AUTH'], json_data=update_fields)
-    
-def fetch_all_relevant_tickets(config, since_date_str):
-    """Busca todos os tickets recentes do Freshdesk para o mapeamento inteligente."""
-    log(f"Buscando todos os tickets do Freshdesk desde {since_date_str} para mapeamento...")
-    url = f"https://{config['FRESHDESK_DOMAIN']}.freshdesk.com/api/v2/tickets"
-    params = {'updated_since': f"{since_date_str}T00:00:00Z", 'include': 'description', 'per_page': 100}
-    return api_request('GET', url, config['FRESHDESK_AUTH'], params=params) or []
